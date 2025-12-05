@@ -28,6 +28,7 @@ import 'package:simple_live_app/services/douyin_account_service.dart';
 import 'package:simple_live_app/services/db_service.dart';
 import 'package:simple_live_app/services/follow_service.dart';
 import 'package:simple_live_app/services/local_storage_service.dart';
+import 'package:simple_live_app/services/app_lifecycle_service.dart';
 import 'package:simple_live_app/services/sync_service.dart';
 import 'package:simple_live_app/widgets/status/app_loadding_widget.dart';
 import 'package:simple_live_core/simple_live_core.dart';
@@ -137,6 +138,9 @@ Future initServices() async {
   Get.put(SyncService());
 
   Get.put(FollowService());
+
+  // 初始化应用生命周期服务（用于处理退出时的播放器清理）
+  await Get.put(AppLifecycleService()).init();
 
   initCoreLog();
 }
