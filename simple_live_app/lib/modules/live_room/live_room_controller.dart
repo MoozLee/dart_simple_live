@@ -78,6 +78,10 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   var currentLineIndex = -1;
   var currentLineInfo = "".obs;
 
+  /// 播放器操作锁，防止并发操作导致 MPV 崩溃
+  Completer<void>? _playerOperationLock;
+  bool _isDisposed = false;
+
   /// 退出倒计时
   var countdown = 60.obs;
 
@@ -417,6 +421,11 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
   }
 
   void initPlaylist() async {
+    // 等待之前的操作完成
+    await _waitForPlayerOperation();
+    
+    if (_isDisposed) return;
+    
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     errorMsg.value = "";
 
@@ -428,17 +437,82 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return Media(finalUrl, httpHeaders: playHeaders);
     }).toList();
 
-    // 初始化播放器并设置 ao 参数
-    await initializePlayer();
+    try {
+      // 初始化播放器并设置 ao 参数
+      await initializePlayer();
 
-    await player.open(Playlist(mediaList));
+      if (_isDisposed) return;
+      
+      // 先停止当前播放，避免状态冲突
+      await player.stop();
+      
+      // 等待一小段时间让 MPV 处理停止命令
+      await Future.delayed(const Duration(milliseconds: 100));
+      
+      if (_isDisposed) return;
+      
+      await player.open(Playlist(mediaList));
+    } catch (e) {
+      Log.e('initPlaylist 失败: $e', StackTrace.current);
+      _releasePlayerOperationLock();
+      rethrow;
+    }
+    
+    _releasePlayerOperationLock();
   }
 
   void setPlayer() async {
+    // 等待之前的操作完成
+    await _waitForPlayerOperation();
+    
+    if (_isDisposed) return;
+    
     currentLineInfo.value = "线路${currentLineIndex + 1}";
     errorMsg.value = "";
 
-    await player.jump(currentLineIndex);
+    try {
+      // 检查播放列表是否已初始化
+      if (playUrls.isEmpty || currentLineIndex < 0 || currentLineIndex >= playUrls.length) {
+        Log.w('setPlayer: 播放列表未初始化或索引无效');
+        _releasePlayerOperationLock();
+        return;
+      }
+      
+      await player.jump(currentLineIndex);
+    } catch (e) {
+      Log.e('setPlayer 失败: $e', StackTrace.current);
+      _releasePlayerOperationLock();
+      rethrow;
+    }
+    
+    _releasePlayerOperationLock();
+  }
+  
+  /// 等待播放器操作完成
+  Future<void> _waitForPlayerOperation() async {
+    if (_isDisposed) return;
+    
+    while (_playerOperationLock != null && !_isDisposed) {
+      try {
+        await _playerOperationLock!.future;
+      } catch (e) {
+        // 忽略已完成的操作
+        break;
+      }
+    }
+    
+    if (_isDisposed) return;
+    
+    // 创建新的锁
+    _playerOperationLock = Completer<void>();
+  }
+  
+  /// 释放播放器操作锁
+  void _releasePlayerOperationLock() {
+    if (_playerOperationLock != null && !_playerOperationLock!.isCompleted) {
+      _playerOperationLock!.complete();
+      _playerOperationLock = null;
+    }
   }
 
   @override
@@ -1053,6 +1127,15 @@ ${error?.stackTrace}''');
 
   @override
   void onClose() {
+    _isDisposed = true;
+    
+    // 等待所有播放器操作完成（不阻塞，但标记为已释放）
+    _waitForPlayerOperation().then((_) {
+      // 操作完成后继续清理
+    }).catchError((e) {
+      Log.e('等待播放器操作时出错: $e', StackTrace.current);
+    });
+    
     WidgetsBinding.instance.removeObserver(this);
     scrollController.removeListener(scrollListener);
     autoExitTimer?.cancel();

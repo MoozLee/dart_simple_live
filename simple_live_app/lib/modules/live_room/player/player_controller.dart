@@ -842,7 +842,18 @@ class PlayerController extends BaseController
     disposeStream();
     disposeDanmakuController();
     await resetSystem();
-    await player.dispose();
+    
+    try {
+      // 先停止播放，避免在播放状态时释放资源
+      await player.stop();
+      // 等待 MPV 处理停止命令，确保线程安全
+      await Future.delayed(const Duration(milliseconds: 200));
+      // 然后释放资源
+      await player.dispose();
+    } catch (e) {
+      Log.e('释放播放器资源时出错: $e', StackTrace.current);
+    }
+    
     super.onClose();
   }
 }
