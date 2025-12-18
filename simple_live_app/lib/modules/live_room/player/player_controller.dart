@@ -833,8 +833,11 @@ class PlayerController extends BaseController
     );
   }
 
+  /// 标记播放器是否已被释放，避免重复释放
+  bool _playerDisposed = false;
+  
   @override
-  void onClose() async {
+  Future<void> onClose() async {
     Log.w("播放器关闭");
     if (smallWindowState.value) {
       exitSmallWindow();
@@ -843,15 +846,22 @@ class PlayerController extends BaseController
     disposeDanmakuController();
     await resetSystem();
     
-    try {
-      // 先停止播放，避免在播放状态时释放资源
-      await player.stop();
-      // 等待 MPV 处理停止命令，确保线程安全
-      await Future.delayed(const Duration(milliseconds: 200));
-      // 然后释放资源
-      await player.dispose();
-    } catch (e) {
-      Log.e('释放播放器资源时出错: $e', StackTrace.current);
+    // 避免重复释放播放器资源
+    if (!_playerDisposed) {
+      _playerDisposed = true;
+      try {
+        // 先停止播放，避免在播放状态时释放资源
+        await player.stop();
+        // 等待 MPV 处理停止命令，确保线程安全
+        await Future.delayed(const Duration(milliseconds: 300));
+        // 然后释放资源
+        await player.dispose();
+        Log.i('播放器资源已成功释放');
+      } catch (e) {
+        Log.e('释放播放器资源时出错: $e', StackTrace.current);
+      }
+    } else {
+      Log.w('播放器已被释放，跳过重复释放');
     }
     
     super.onClose();

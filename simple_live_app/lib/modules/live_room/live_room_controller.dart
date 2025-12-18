@@ -1048,6 +1048,14 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
       return;
     }
 
+    // 等待之前的播放器操作完成，避免并发操作导致 MPV 崩溃
+    await _waitForPlayerOperation();
+    
+    if (_isDisposed) {
+      _releasePlayerOperationLock();
+      return;
+    }
+
     rxSite.value = site;
     rxRoomId.value = roomId;
 
@@ -1060,8 +1068,16 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     // 重新设置LiveDanmaku
     liveDanmaku = site.liveSite.getDanmaku();
 
-    // 停止播放
-    await player.stop();
+    try {
+      // 停止播放
+      await player.stop();
+      // 等待 MPV 处理停止命令
+      await Future.delayed(const Duration(milliseconds: 100));
+    } catch (e) {
+      Log.e('resetRoom 停止播放器时出错: $e', StackTrace.current);
+    }
+    
+    _releasePlayerOperationLock();
 
     // 刷新信息
     loadData();
@@ -1126,15 +1142,23 @@ ${error?.stackTrace}''');
   }
 
   @override
-  void onClose() {
+  Future<void> onClose() async {
     _isDisposed = true;
     
-    // 等待所有播放器操作完成（不阻塞，但标记为已释放）
-    _waitForPlayerOperation().then((_) {
-      // 操作完成后继续清理
-    }).catchError((e) {
+    // 同步等待所有播放器操作完成，确保不会在操作进行中释放资源
+    try {
+      // 如果有正在进行的操作，等待它完成
+      if (_playerOperationLock != null && !_playerOperationLock!.isCompleted) {
+        await _playerOperationLock!.future.timeout(
+          const Duration(seconds: 2),
+          onTimeout: () {
+            Log.w('等待播放器操作超时，强制继续清理');
+          },
+        );
+      }
+    } catch (e) {
       Log.e('等待播放器操作时出错: $e', StackTrace.current);
-    });
+    }
     
     WidgetsBinding.instance.removeObserver(this);
     scrollController.removeListener(scrollListener);
