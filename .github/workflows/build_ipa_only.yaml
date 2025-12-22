@@ -1,0 +1,56 @@
+name: build-ipa-only
+
+on:
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  build-ios:
+    runs-on: macos-latest
+
+    permissions:
+      contents: write
+
+    steps:
+      # 签出代码
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+
+      # 设置Flutter
+      - name: Flutter action
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.38.x"
+          cache: true
+
+      # 更新Flutter的packages
+      - name: Restore packages
+        run: |
+          cd simple_live_app
+          flutter pub get
+
+      # 打包iOS
+      - name: Build IPA
+        run: |
+          cd simple_live_app
+          flutter build ios --release --no-codesign
+
+      # 创建未签名ipa
+      - name: Create IPA
+        run: |
+          cd simple_live_app
+          mkdir build/ios/iphoneos/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/iphoneos/Payload/Runner.app
+          cd build/ios/iphoneos/
+          zip -q -r ios_no_sign.ipa Payload
+
+      # 上传IPA至Artifacts
+      - name: Upload IPA to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: |
+            simple_live_app/build/ios/iphoneos/ios_no_sign.ipa
+
+      - run: echo "🍏 iOS build completed with status ${{ job.status }}."
+
