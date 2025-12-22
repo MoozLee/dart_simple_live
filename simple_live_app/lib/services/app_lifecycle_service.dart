@@ -80,11 +80,17 @@ class AppLifecycleService extends GetxService {
         final controller = Get.find<LiveRoomController>();
         Log.i('正在停止播放器...');
         
-        // 先停止播放
+        // 先暂停播放，给 mpv 更多时间处理当前帧
+        if (controller.player.state.playing) {
+          await controller.player.pause();
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+        
+        // 再停止播放
         await controller.player.stop();
         
-        // 等待一小段时间让 MPV 线程处理停止命令
-        await Future.delayed(const Duration(milliseconds: 300));
+        // 等待 MPV 线程处理停止命令，增加等待时间确保 mpv core 线程完成
+        await Future.delayed(const Duration(milliseconds: 500));
         
         // 释放播放器资源
         await controller.player.dispose();

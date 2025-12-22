@@ -52,6 +52,13 @@ mixin PlayerMixin {
     if(Platform.isAndroid){
       await pp.setProperty('force-seekable', 'yes');
     }
+    // macOS 稳定性优化：减少缓存以避免 mpv 线程竞争
+    if(Platform.isMacOS){
+      // 设置较小的解复用器缓存，减少线程压力
+      await pp.setProperty('demuxer-max-bytes', '50MiB');
+      // 设置较小的缓存秒数
+      await pp.setProperty('cache-secs', '10');
+    }
   }
 
   /// 视频控制器
@@ -836,6 +843,9 @@ class PlayerController extends BaseController
   /// 标记播放器是否已被释放，避免重复释放
   bool _playerDisposed = false;
   
+  /// 标记播放器是否正在停止中，防止并发操作
+  bool _playerStopping = false;
+  
   @override
   Future<void> onClose() async {
     Log.w("播放器关闭");
@@ -847,21 +857,31 @@ class PlayerController extends BaseController
     await resetSystem();
     
     // 避免重复释放播放器资源
-    if (!_playerDisposed) {
+    if (!_playerDisposed && !_playerStopping) {
+      _playerStopping = true;
       _playerDisposed = true;
       try {
-        // 先停止播放，避免在播放状态时释放资源
+        // 先暂停播放，给 mpv 更多时间处理
+        if (player.state.playing) {
+          await player.pause();
+          // 等待暂停命令被处理
+          await Future.delayed(const Duration(milliseconds: 100));
+        }
+        // 再停止播放，避免在播放状态时释放资源
         await player.stop();
-        // 等待 MPV 处理停止命令，确保线程安全
-        await Future.delayed(const Duration(milliseconds: 300));
+        // 等待 MPV 处理停止命令，确保所有内部线程安全退出
+        // 增加等待时间以确保 mpv core 线程完成当前操作
+        await Future.delayed(const Duration(milliseconds: 500));
         // 然后释放资源
         await player.dispose();
         Log.i('播放器资源已成功释放');
       } catch (e) {
         Log.e('释放播放器资源时出错: $e', StackTrace.current);
+      } finally {
+        _playerStopping = false;
       }
     } else {
-      Log.w('播放器已被释放，跳过重复释放');
+      Log.w('播放器已被释放或正在停止中，跳过重复释放');
     }
     
     super.onClose();

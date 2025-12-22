@@ -443,11 +443,19 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
 
       if (_isDisposed) return;
       
-      // 先停止当前播放，避免状态冲突
+      // 先暂停当前播放，给 mpv 更多时间处理当前帧
+      if (player.state.playing) {
+        await player.pause();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      
+      if (_isDisposed) return;
+      
+      // 再停止当前播放，避免状态冲突
       await player.stop();
       
-      // 等待一小段时间让 MPV 处理停止命令
-      await Future.delayed(const Duration(milliseconds: 100));
+      // 等待 MPV 处理停止命令，确保 mpv core 线程完成当前操作
+      await Future.delayed(const Duration(milliseconds: 200));
       
       if (_isDisposed) return;
       
@@ -1069,10 +1077,21 @@ class LiveRoomController extends PlayerController with WidgetsBindingObserver {
     liveDanmaku = site.liveSite.getDanmaku();
 
     try {
+      // 先暂停播放，给 mpv 更多时间处理当前帧
+      if (player.state.playing) {
+        await player.pause();
+        await Future.delayed(const Duration(milliseconds: 50));
+      }
+      
+      if (_isDisposed) {
+        _releasePlayerOperationLock();
+        return;
+      }
+      
       // 停止播放
       await player.stop();
-      // 等待 MPV 处理停止命令
-      await Future.delayed(const Duration(milliseconds: 100));
+      // 等待 MPV 处理停止命令，确保 mpv core 线程安全完成
+      await Future.delayed(const Duration(milliseconds: 200));
     } catch (e) {
       Log.e('resetRoom 停止播放器时出错: $e', StackTrace.current);
     }
